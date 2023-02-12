@@ -74,10 +74,12 @@ const screenHeight = gl.canvas.height;
 // Ball data
 let ballOffset: vec2;
 let ballVelocity: vec2;
-
+let ballRadius = 10.0;
 let initialBallVelocity: vec2 = { x: 4.5, y: 4.5 };
+const ballSpeed = 10.5;
+const MAX_ANGLE = 30;
 
-const paddleSpeed = 5.0;
+const paddleSpeed = 8.0;
 const paddleHeight = 80.0;
 const paddleWidth = 15.0;
 let paddleOffset: vec2[];
@@ -148,7 +150,7 @@ function setupKeyEvents(keyState: { [x: string]: boolean }) {
    );
 }
 
-function gen2DCircleArray(noTriangles: number, radius = 0.5) {
+function gen2DCircleArray(noTriangles: number, radius: number) {
    const circleArray = [];
    const indices = [];
    const angle = (2 * Math.PI) / noTriangles;
@@ -177,13 +179,20 @@ function updateScore() {
    document.getElementById("right-player").innerText = rightScore.toString();
 }
 
+function calculateNewVelocityAngle(i) {
+   const relativeIntersectY = paddleOffset[i].y + paddleHeight / 2 - (ballOffset.y + ballRadius / 2);
+   const normalizedRelativeIntersectionY = relativeIntersectY / (paddleHeight / 2);
+   const bounceAngle = normalizedRelativeIntersectionY * MAX_ANGLE;
+   return bounceAngle * (Math.PI / 180);
+}
+
 function main() {
    const program = webglUtils.createProgramFromScripts(gl, ["vertex-shader", "fragment-shader"]);
 
    // Ball data
-   const [ballVertices, ballIndices] = gen2DCircleArray(100);
+   const [ballVertices, ballIndices] = gen2DCircleArray(100, ballRadius);
    ballOffset = { x: screenWidth / 2, y: screenHeight / 2 };
-   const ballSize: vec2 = { x: 20, y: 20 };
+   const ballSize: vec2 = { x: 1, y: 1 };
    ballVelocity = { x: initialBallVelocity.x, y: initialBallVelocity.y };
 
    // Paddle data
@@ -293,15 +302,13 @@ function main() {
 
    setOrthographicProjection(program, 0, screenWidth, 0, screenHeight, 0.0, 1.0);
 
-   function animate() {
-      requestAnimationFrame(animate);
+   let lastTime = 0;
 
+   function animate(time) {
       // Update the time
-
-      // Update the ball position
-      ballOffset.x += ballVelocity.x;
-      ballOffset.y += ballVelocity.y;
-      updateOffsetBuffer(ballVAO, ballOffset, ballOffsetLocation);
+      if (lastTime == 0) lastTime = time;
+      let deltaTime = time - lastTime;
+      lastTime = time;
 
       // Update the paddle position
       processInput();
@@ -314,8 +321,11 @@ function main() {
          Check for collisions
       */
 
+      //calculate where the ball will be in the next frame
+      let nextBallOffset: vec2 = { x: ballOffset.x + ballVelocity.x, y: ballOffset.y + ballVelocity.y };
+
       // Check for collision with the top and bottom of the screen
-      if (ballOffset.y + ballSize.y / 2 >= screenHeight || ballOffset.y - ballSize.y / 2 <= 0) {
+      if (nextBallOffset.y + ballRadius >= screenHeight || nextBallOffset.y - ballRadius <= 0) {
          ballVelocity.y *= -1;
          playSound("wall");
       }
@@ -326,55 +336,37 @@ function main() {
          i = 1;
       }
 
-      let distance: vec2 = { x: Math.abs(ballOffset.x - paddleOffset[i].x), y: Math.abs(ballOffset.y - paddleOffset[i].y) };
+      let distance: vec2 = { x: Math.abs(nextBallOffset.x - paddleOffset[i].x), y: Math.abs(nextBallOffset.y - paddleOffset[i].y) };
 
-      if (distance.x <= halfPaddleWidth + ballSize.x / 2 && distance.y <= halfPaddleHeight + ballSize.y / 2) {
+      if (distance.x <= halfPaddleWidth + ballRadius && distance.y <= halfPaddleHeight + ballRadius) {
          let collision = false;
 
-         if (distance.x <= halfPaddleWidth && distance.x >= halfPaddleWidth - ballSize.y / 2) {
+         if (distance.x <= halfPaddleWidth && distance.x >= halfPaddleWidth - ballRadius) {
             collision = true;
-            ballVelocity.x = i == 0 ? Math.abs(ballVelocity.x) : -Math.abs(ballVelocity.x);
-         } else if (distance.y <= halfPaddleHeight && distance.y >= halfPaddleHeight - ballSize.y / 2) {
+         } else if (distance.y <= halfPaddleHeight && distance.y >= halfPaddleHeight - ballRadius) {
             collision = true;
-            ballVelocity.x = i == 0 ? Math.abs(ballVelocity.x) : -Math.abs(ballVelocity.x);
-            ballVelocity.y = i == 0 ? Math.abs(ballVelocity.y) : -Math.abs(ballVelocity.y);
-         }
-
-         let squaredDistance = (distance.x - halfPaddleWidth) * (distance.x - halfPaddleWidth) + (distance.y - halfPaddleHeight) * (distance.y - halfPaddleHeight);
-
-         if (squaredDistance <= (ballSize.x * ballSize.x) / 4 && !collision) {
-            collision = true;
-            console.log(ballOffset.x, paddleOffset[i].x, ballOffset.y, paddleOffset[i].y);
-            let signedDifference = paddleOffset[i].x - ballOffset.x;
-            if (i == 0) {
-               signedDifference *= -1;
-            }
-
-            if (distance.y - halfPaddleHeight <= signedDifference - halfPaddleWidth) {
-               ballVelocity.x = i == 0 ? Math.abs(ballVelocity.x) : -Math.abs(ballVelocity.x);
-            } else {
-               ballVelocity.x = i == 0 ? Math.abs(ballVelocity.x) : -Math.abs(ballVelocity.x);
-               ballVelocity.y = i == 0 ? Math.abs(ballVelocity.y) : -Math.abs(ballVelocity.y);
-            }
          }
 
          if (collision) {
-            let k = 0.05;
+            let theta = calculateNewVelocityAngle(i);
+            let newX = Math.abs(Math.cos(theta) * ballSpeed);
+            let newY = -Math.sin(theta) * ballSpeed;
+
+            ballVelocity.x = i == 0 ? newX : -newX;
+            ballVelocity.y = newY;
             playSound("ballHit");
-            ballVelocity.x *= 1.01;
-            ballVelocity.y += k * paddleVelocities[i];
          }
       }
 
       let reset = 0;
 
       // Check for collision with the left and right of the screen
-      if (ballOffset.x - ballSize.x / 2 <= 0) {
+      if (ballOffset.x - ballRadius <= 0) {
          reset = 1;
          rightScore++;
       }
 
-      if (ballOffset.x + ballSize.x / 2 >= screenWidth) {
+      if (ballOffset.x + ballRadius >= screenWidth) {
          reset = 2;
          leftScore++;
       }
@@ -390,17 +382,30 @@ function main() {
          playSound("score");
       }
 
+      // Update the ball position
+      if (deltaTime > 0) {
+         ballOffset.x += ballVelocity.x;
+         ballOffset.y += ballVelocity.y;
+         updateOffsetBuffer(ballVAO, ballOffset, ballOffsetLocation);
+      }
+
+      /* 
+         End of collision checks
+      */
+
       // Black out the screen
       gl.clearColor(0, 0, 0, 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
 
-      // Draw the ball and the paddle and the middle lines
+      // Draw the ball,paddle and the middle lines
       draw(ballVAO, gl.TRIANGLES, ballIndices.length, gl.UNSIGNED_SHORT, 0, 1);
       draw(paddleVAO, gl.TRIANGLES, paddleIndices.length, gl.UNSIGNED_SHORT, 0, 2);
       draw(middleLineVAO, gl.TRIANGLES, middleLineIndices.length, gl.UNSIGNED_SHORT, 0, numOfMiddleLines + 1);
+
+      requestAnimationFrame(animate);
    }
 
-   animate();
+   requestAnimationFrame(animate);
 }
 
 main();
